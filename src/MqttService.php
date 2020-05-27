@@ -23,6 +23,7 @@ class MqttService implements MqttServiceInterface
     private $loop;
     private $client;
     private $server;
+    private $hid;
 
     Protected $outSystem;
     
@@ -30,11 +31,16 @@ class MqttService implements MqttServiceInterface
     {
         $this->loop = Factory::create();
 
-        $config = ['outSystemName' => 'MqttSrv'];
+        $config = [
+            'outSystemName' => 'MqttSrv',
+            "outSystemEnabled" => true
+        ];
 
         $this->server = new SimpleUnixServer($this->loop, self::MQTT_SERVICE_SOCKET, [$config]);
 
         $this->outSystem = new OutSystem($config);
+
+        $this->hid = new HID($this->loop, $config);
         
         $dnsResolverFactory = new \React\Dns\Resolver\Factory();
         $connector = new DnsConnector(new TcpConnector($this->loop), $dnsResolverFactory->createCached('8.8.8.8', $this->loop));
@@ -45,47 +51,43 @@ class MqttService implements MqttServiceInterface
 
     public function start()
     {
-        
+        $this->connectToBroker();
+
+        $this->hid->start($this->postSensor);
 
         $this->loop->run();
     }
 
     private function connectToBroker()
     {
+        $this->outSystem->stdout(
+            "Connecting to: " . self::MQTT_BROKER_URI . 
+                (self::MQTT_BROKER_PORT !== null ? ':' . self::MQTT_BROKER_PORT : ':1883'), 
+            OutSystem::LEVEL_NOTICE
+        );
+            
+        $this->client->connect(
+            self::MQTT_BROKER_URI,
+            (self::MQTT_BROKER_PORT !== null ? self::MQTT_BROKER_PORT : 1883),
+            new DefaultConnection(
+                (self::MQTT_USER_NAME !== null && self::MQTT_PASSWORD !== null ? self::MQTT_USER_NAME : ''), 
+                (self::MQTT_USER_NAME !== null && self::MQTT_PASSWORD !== null ? self::MQTT_PASSWORD : ''), 
+                null,
+                self::MQTT_CLIENT_ID
+            )
+        )
+        ->then( function () {
 
-        if (self::MQTT_USER_NAME !== null && self::MQTT_PASSWORD !== null)
-            $connCfg = [
-                self::MQTT_BROKER_URI,
-                (self::MQTT_BROKER_PORT !== null ? self::MQTT_BROKER_PORT : 1883),
-                new DefaultConnection(
-                    self::MQTT_USER_NAME, 
-                    self::MQTT_PASSWORD,
-                    null,
-                    self::MQTT_CLIENT_ID
-                )
-            ];
-        else 
-            $connCfg = [
-                self::MQTT_BROKER_URI,
-                (self::MQTT_BROKER_PORT !== null ? self::MQTT_BROKER_PORT : 1883),
-                new DefaultConnection(
-                    '', 
-                    '',
-                    null,
-                    self::MQTT_CLIENT_ID
-                )
-            ];
-
-        // 'test.mosquitto.org'
-        $this->client->connect($connCfg)->then( function () {
-
-            $this->subscribe('#');
+            // Subscribe to all configs
+            $this->subscribe(self::MQTT_TENANT . '/config/+/' . self::MQTT_CLIENT_ID);
 
             $me = &$this;
             $this->loop->addPeriodicTimer(5.0, function () use ($me) {
                 $me->postSensor('ai01', 4095);
             });
                 
+        }, function ($e) {
+            var_dump($e);
         });
     }
 
@@ -124,11 +126,17 @@ class MqttService implements MqttServiceInterface
             if ($message->isRetained()) 
                 $this->outSystem->stdout(" (retained)", false, OutSystem::LEVEL_NOTICE);
         
-            
+            $data = $message->getPayload();
             $this->outSystem->stdout(
-                ': ' . $message->getTopic().' => ' . mb_strimwidth($message->getPayload(), 0, 50, '...'), 
+                ': ' . $message->getTopic().' => ' . mb_strimwidth($data, 0, 50, '...'), 
                 OutSystem::LEVEL_NOTICE
             );
+
+            if (is_array($data = \json_decode($data, true))) {
+
+            } else {
+                $this->outSystem->stdout( "Wrong data" , OutSystem::LEVEL_NOTICE);
+            }
         });
         
         $this->client->on('warning', function (\Exception $e) {
@@ -176,15 +184,15 @@ class MqttService implements MqttServiceInterface
         return false;
     }
 
-    public function postSensor($sensor, $value, $config = false)
+    public function postSensor($sensor, $value)
     {
-        $topic = self::MQTT_TENANT . ($config ? '/config' : '') . '/sensors/' . self::MQTT_CLIENT_ID;
+        $topic = self::MQTT_TENANT  . '/sensors/' . self::MQTT_CLIENT_ID;
         $value = [
             'sensor' => $sensor,
             'value' => $value,
             'ts' => \time()
         ];
 
-        return $this->publish($topic, $value);
+        return $this->publish($topic, \json_encode($value));
     }
 }
