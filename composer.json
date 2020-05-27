@@ -10,7 +10,7 @@
 	],
     "require": {
 			"php": ">=7.3",
-			"brunonatali/tools": "@dev",
+			"brunonatali/tools": "dev-master",
 			"react/socket": "^1.4",
 			"binsoul/net-mqtt-client-react": "0.7.2"
 	},
