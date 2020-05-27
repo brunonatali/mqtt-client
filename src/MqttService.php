@@ -6,16 +6,17 @@ use React\EventLoop\Factory;
 use React\Socket\DnsConnector;
 use React\Socket\TcpConnector;
 
-use BrunoNatali\Tools\OutSystem;
 use BrunoNatali\Tools\Queue;
+use BrunoNatali\Tools\OutSystem;
 use BrunoNatali\Tools\Communication\SimpleUnixServer;
 
-use BinSoul\Net\Mqtt\Client\React\ReactMqttClient;
-use BinSoul\Net\Mqtt\Connection;
-use BinSoul\Net\Mqtt\DefaultMessage;
-use BinSoul\Net\Mqtt\DefaultSubscription;
 use BinSoul\Net\Mqtt\Message;
+use BinSoul\Net\Mqtt\Connection;
 use BinSoul\Net\Mqtt\Subscription;
+use BinSoul\Net\Mqtt\DefaultMessage;
+use BinSoul\Net\Mqtt\DefaultConnection;
+use BinSoul\Net\Mqtt\DefaultSubscription;
+use BinSoul\Net\Mqtt\Client\React\ReactMqttClient;
 
 class MqttService implements MqttServiceInterface
 {
@@ -44,49 +45,53 @@ class MqttService implements MqttServiceInterface
 
     public function start()
     {
-
-        $this->client->connect('test.mosquitto.org')->then( function () {
-                // Subscribe to all topics
-                $this->client->subscribe(new DefaultSubscription('#'))
-                    ->then(function (Subscription $subscription) {
-                        echo sprintf("Subscribe: %s\n", $subscription->getFilter());
-                    })
-                    ->otherwise(function (\Exception $e) {
-                        echo sprintf("Error: %s\n", $e->getMessage());
-                    });
         
-                // Publish humidity once
-                $this->client->publish(new DefaultMessage('sensors/humidity', '55%'))
-                    ->then(function (Message $message) {
-                        echo sprintf("Publish: %s => %s\n", $message->getTopic(), $message->getPayload());
-                    })
-                    ->otherwise(function (\Exception $e) {
-                        echo sprintf("Error: %s\n", $e->getMessage());
-                    });
-        
-                // Publish a random temperature every 10 seconds
-                $generator = function () {
-                    return mt_rand(-20, 30);
-                };
-        
-                $this->client->publishPeriodically(10, new DefaultMessage('sensors/temperature'), $generator)
-                    ->progress(function (Message $message) {
-                        echo sprintf("Publish: %s => %s\n", $message->getTopic(), $message->getPayload());
-                    })
-                    ->otherwise(function (\Exception $e) {
-                        echo sprintf("Error: %s\n", $e->getMessage());
-                    });
-        });
 
         $this->loop->run();
     }
 
-    private function connectToBrocker()
+    private function connectToBroker()
     {
+
+        if (self::MQTT_USER_NAME !== null && self::MQTT_PASSWORD !== null)
+            $connCfg = [
+                self::MQTT_BROKER_URI,
+                (self::MQTT_BROKER_PORT !== null ? self::MQTT_BROKER_PORT : 1883),
+                new DefaultConnection(
+                    self::MQTT_USER_NAME, 
+                    self::MQTT_PASSWORD,
+                    null,
+                    self::MQTT_CLIENT_ID
+                )
+            ];
+        else 
+            $connCfg = [
+                self::MQTT_BROKER_URI,
+                (self::MQTT_BROKER_PORT !== null ? self::MQTT_BROKER_PORT : 1883),
+                new DefaultConnection(
+                    '', 
+                    '',
+                    null,
+                    self::MQTT_CLIENT_ID
+                )
+            ];
+
+        // 'test.mosquitto.org'
+        $this->client->connect($connCfg)->then( function () {
+
+            $this->subscribe('#');
+
+            $me = &$this;
+            $this->loop->addPeriodicTimer(5.0, function () use ($me) {
+                $me->postSensor('ai01', 4095);
+            });
+                
+        });
     }
 
     private function configureCallbacks()
     {
+
         $this->server->onData(function ($data, $id) {
 
         });
@@ -135,4 +140,51 @@ class MqttService implements MqttServiceInterface
         });
     }
 
+    // '#'
+    public function subscribe($topic)
+    {
+        if ($this->client->isConnected()) {
+            $this->client->subscribe(new DefaultSubscription($topic))
+                ->then(function (Subscription $subscription) {
+                    $this->outSystem->stdout("Subscribed: " . $subscription->getFilter(), OutSystem::LEVEL_NOTICE);
+                })
+                ->otherwise(function (\Exception $e) {
+                    $this->outSystem->stdout("Subscription error: " . $e->getMessage(), OutSystem::LEVEL_NOTICE);
+                });
+
+            return true;
+        }
+
+        return false;
+    }
+
+    // 'sensors/humidity', '55%'
+    public function publish($topic, $value)
+    {
+        if ($this->client->isConnected()) {
+            $this->client->publish(new DefaultMessage($topic, $value))
+                ->then(function (Message $message) {
+                    $this->outSystem->stdout("Published: " . $message->getTopic() . ' => ' . $message->getPayload(), OutSystem::LEVEL_NOTICE);
+                })
+                ->otherwise(function (\Exception $e) {
+                    $this->outSystem->stdout("Publish error: " . $e->getMessage(), OutSystem::LEVEL_NOTICE);
+                });
+
+            return true;
+        }
+
+        return false;
+    }
+
+    public function postSensor($sensor, $value, $config = false)
+    {
+        $topic = self::MQTT_TENANT . ($config ? '/config' : '') . '/sensors/' . self::MQTT_CLIENT_ID;
+        $value = [
+            'sensor' => $sensor,
+            'value' => $value,
+            'ts' => \time()
+        ];
+
+        return $this->publish($topic, $value);
+    }
 }
