@@ -8,7 +8,7 @@ use React\Socket\TcpConnector;
 
 use BrunoNatali\Tools\OutSystem;
 use BrunoNatali\Tools\Queue;
-use BrunoNatali\Tools\SimpleUnixServer;
+use BrunoNatali\Tools\Communication\SimpleUnixServer;
 
 use BinSoul\Net\Mqtt\Client\React\ReactMqttClient;
 use BinSoul\Net\Mqtt\Connection;

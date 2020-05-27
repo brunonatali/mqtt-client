@@ -1,11 +1,11 @@
 <?php
 
-namespace BrunoNatali\SystemInteraction;
+namespace BrunoNatali\MqttClient;
 
 use BrunoNatali\SystemInteraction\MainInterface;
 
 interface MqttServiceInterface extends MainInterface
 {
 
-    const MQTT_SERVICE_SOCKET = 'runas-root.sock';
+    const MQTT_SERVICE_SOCKET = 'mqtt-service.sock';
 }
