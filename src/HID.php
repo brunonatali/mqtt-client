@@ -82,7 +82,7 @@ class HID implements HIDInterface
                     )
                 ];
 
-                $this->registerInterfaceAcquisition($gpio);
+                $this->registerInterfaceAcquisition($gpio, $callback);
 
                 $this->interfacesByNick[ $interface['name'] ] = &$this->interfaces[ $gpio ];
                 break;
@@ -110,7 +110,7 @@ class HID implements HIDInterface
                     )
                 ];
 
-                $this->registerInterfaceAcquisition($index);
+                $this->registerInterfaceAcquisition($index, $callback);
 
                 $this->interfacesByNick[ $interface['name'] ] = &$this->interfaces[ $index ];
 
@@ -120,7 +120,7 @@ class HID implements HIDInterface
         $this->outSystem->stdout($out, OutSystem::LEVEL_NOTICE);
     }
 
-    private function registerInterfaceAcquisition($nuber)
+    private function registerInterfaceAcquisition($nuber, $callback)
     {
         $interface = &$this->interfaces[ $nuber ]['config'];
 
