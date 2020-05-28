@@ -5,7 +5,7 @@ namespace BrunoNatali\MqttClient;
 interface HIDInterface extends IoManipulationInterface
 {
     const HID_TYPE_IO = 0x10;
-    const HID_TYPE_AD = 0x10;
+    const HID_TYPE_AD = 0x11;
 
     const HID_ACQ_TYPE_POLLING = 0x20;
     const HID_ACQ_TYPE_TRIGGER_VALUE = 0x21; 
@@ -78,6 +78,55 @@ interface HIDInterface extends IoManipulationInterface
             'gpio' => 115,
             'type' => self::HID_TYPE_IO,
             'direction' => self::HID_DEFAULT_DIRECTION,
+            'acquisition_type' => self::HID_DEFAULT_ACQ_TYPE,
+            'time' => self::HID_DEFAULT_ACQ_TIME
+        ], [
+            'name' => 'AI0',
+            'pin' => 'P9-39',
+            'index' => 0,
+            'type' => self::HID_TYPE_AD,
+            'acquisition_type' => self::HID_DEFAULT_ACQ_TYPE,
+            'time' => self::HID_DEFAULT_ACQ_TIME
+        ], [
+            'name' => 'AI1',
+            'pin' => 'P9-40',
+            'index' => 1,
+            'type' => self::HID_TYPE_AD,
+            'acquisition_type' => self::HID_DEFAULT_ACQ_TYPE,
+            'time' => self::HID_DEFAULT_ACQ_TIME
+        ], [
+            'name' => 'AI2',
+            'pin' => 'P9-37',
+            'index' => 2,
+            'type' => self::HID_TYPE_AD,
+            'acquisition_type' => self::HID_DEFAULT_ACQ_TYPE,
+            'time' => self::HID_DEFAULT_ACQ_TIME
+        ], [
+            'name' => 'AI3',
+            'pin' => 'P9-38',
+            'index' => 3,
+            'type' => self::HID_TYPE_AD,
+            'acquisition_type' => self::HID_DEFAULT_ACQ_TYPE,
+            'time' => self::HID_DEFAULT_ACQ_TIME
+        ], [
+            'name' => 'AI4',
+            'pin' => 'P9-33',
+            'index' => 4,
+            'type' => self::HID_TYPE_AD,
+            'acquisition_type' => self::HID_DEFAULT_ACQ_TYPE,
+            'time' => self::HID_DEFAULT_ACQ_TIME
+        ], [
+            'name' => 'AI5',
+            'pin' => 'P9-36',
+            'index' => 5,
+            'type' => self::HID_TYPE_AD,
+            'acquisition_type' => self::HID_DEFAULT_ACQ_TYPE,
+            'time' => self::HID_DEFAULT_ACQ_TIME
+        ], [
+            'name' => 'AI6',
+            'pin' => 'P9-35',
+            'index' => 6,
+            'type' => self::HID_TYPE_AD,
             'acquisition_type' => self::HID_DEFAULT_ACQ_TYPE,
             'time' => self::HID_DEFAULT_ACQ_TIME
         ]
