@@ -10,6 +10,7 @@ class IoManipulation implements IoManipulationInterface
     private $direction;
     private $value;
     private $exported;
+    private $autoExport;
 
     Protected $outSystem;
 
@@ -21,12 +22,13 @@ class IoManipulation implements IoManipulationInterface
      *  OutSystem::configs
      * ]
     */
-    function __construct($ioNumeber, $autoExport = true, $configs = [])
+    function __construct($ioNumeber, $autoExport = false, $configs = [])
     {
         $this->io = $ioNumeber;
         $this->direction = null;
         $this->value = null;
         $this->exported = false;
+        $this->autoExport = $autoExport;
         
         $config = OutSystem::helpHandleAppName( 
             $configs,
@@ -36,17 +38,28 @@ class IoManipulation implements IoManipulationInterface
             ]
         );
         $this->outSystem = new OutSystem($config);
+
+        $this->outSystem->stdout("Handled.", OutSystem::LEVEL_NOTICE);
     }
 
     public function open()
     {
+        if (!\file_exists('/sys/class/gpio/gpio' . $this->io)) {
+            $this->outSystem->stdout("Already exported.", OutSystem::LEVEL_NOTICE);
+            $this->exported = true;
+            return true;
+        }
+
         if (\file_put_contents('/sys/class/gpio/export', (string) $this->io) === false ||
             !\file_exists('/sys/class/gpio/gpio' . $this->io)) {
-            
+
+            $this->outSystem->stdout("Unable to export.", OutSystem::LEVEL_NOTICE);
+
             $this->exported = false;
             return false;
         }
-
+        
+        $this->outSystem->stdout("Exported.", OutSystem::LEVEL_NOTICE);
         $this->exported = true;
         return true;
     }
@@ -64,6 +77,8 @@ class IoManipulation implements IoManipulationInterface
                 $this->direction = self::IO_BASE_DIR_ERR;
         } 
 
+        $this->outSystem->stdout("Direction: " . $this->direction, OutSystem::LEVEL_NOTICE);
+
         return $this->direction;
     }
 
@@ -76,6 +91,13 @@ class IoManipulation implements IoManipulationInterface
 
     public function getValue($renew = false)
     {
+        if (!$this->exported) {
+            if ($this->autoExport)
+                $this->open();
+            else
+                $this->outSystem->stdout("open() first.", OutSystem::LEVEL_NOTICE);
+        }
+
         // If is input direction value may change without notice
         if ($this->value === null || 
             $this->getDirection() === self::IO_BASE_DIR_IN || 
@@ -89,6 +111,8 @@ class IoManipulation implements IoManipulationInterface
             else 
                 $this->value = self::IO_BASE_VAL_ERR;
         } 
+
+        $this->outSystem->stdout("Value: " . $this->value, OutSystem::LEVEL_NOTICE);
 
         return $this->value;
     }

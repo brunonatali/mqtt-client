@@ -36,6 +36,8 @@ class HID implements HIDInterface
 
     public function start($callback)
     {
+        $this->outSystem->stdout("Initializing interfaces.", OutSystem::LEVEL_NOTICE);
+
         foreach (self::HID_INTERFACES as $interface) {
             $this->registerInterface($interface, $callback);
         }
@@ -55,9 +57,18 @@ class HID implements HIDInterface
     */
     public function registerInterface($interface, $callback)
     {
+        $this->outSystem->stdout("open() first.", OutSystem::LEVEL_NOTICE);
         switch ($interface['type']) {
             case self::HID_TYPE_IO:
                 $gpio = $interface['gpio'];
+
+                $out = 'Interface ';
+                if (isset($this->interfaces[ $gpio ])) {
+                    $out .= "'$gpio (" . $this->interfaces[ $gpio ]['config']['name'] . ")' reconfigured";
+                    $this->loop->cancelTimer($this->interfaces[ $gpio ]['timer']);
+                } else {
+                    $out .= "'$gpio (" . $interface['name'] . ")' configured";
+                }
 
                 $this->interfaces[ $gpio ] = [
                     'config' => $interface,
