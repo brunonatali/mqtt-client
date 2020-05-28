@@ -83,12 +83,6 @@ class MqttService implements MqttServiceInterface
 
             // Subscribe to all configs
             $this->subscribe(self::MQTT_TENANT . '/config/+/' . self::MQTT_CLIENT_ID);
-
-            // TEST -------*-----*----- REMOVE THIS AFTER TESTS
-            $me = &$this;
-            $this->loop->addPeriodicTimer(5.0, function () use ($me) {
-                $me->postSensor('ai01', 4095);
-            });
                 
         }, function ($e) {
             var_dump($e);
