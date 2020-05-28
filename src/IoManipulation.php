@@ -44,7 +44,7 @@ class IoManipulation implements IoManipulationInterface
 
     public function open()
     {
-        if (!\file_exists('/sys/class/gpio/gpio' . $this->io)) {
+        if (\file_exists('/sys/class/gpio/gpio' . $this->io)) {
             $this->outSystem->stdout("Already exported.", OutSystem::LEVEL_NOTICE);
             $this->exported = true;
             return true;
