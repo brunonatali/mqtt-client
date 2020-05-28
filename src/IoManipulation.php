@@ -42,7 +42,7 @@ class IoManipulation implements IoManipulationInterface
         $this->outSystem->stdout("Handled.", OutSystem::LEVEL_NOTICE);
     }
 
-    public function open()
+    public function open(): bool
     {
         if (\file_exists('/sys/class/gpio/gpio' . $this->io)) {
             $this->outSystem->stdout("Already exported.", OutSystem::LEVEL_NOTICE);
@@ -64,7 +64,7 @@ class IoManipulation implements IoManipulationInterface
         return true;
     }
 
-    public function getDirection($renew = false)
+    public function getDirection($renew = false): string
     {
         if ($this->direction === null || $renew) {
             if ($val = \file_get_contents('/sys/class/gpio/gpio' . $this->io . '/direction')) {
@@ -87,20 +87,24 @@ class IoManipulation implements IoManipulationInterface
         return $this->direction;
     }
 
-    public function setDirection(string $dir)
+    public function setDirection(string $dir): string
     {
         \file_put_contents('/sys/class/gpio/gpio' . $this->io . '/direction', (string) $dir);
 
         return $this->getDirection(true);
     }
 
-    public function getValue($renew = false)
+    public function getValue($renew = false): int
     {
         if (!$this->exported) {
-            if ($this->autoExport)
+            if ($this->autoExport) {
                 $this->open();
-            else
+                $this->autoExport = false; // Prevent inifinite opening on error
+                return $this->getValue($renew);
+            } else {
                 $this->outSystem->stdout("open() first.", OutSystem::LEVEL_NOTICE);
+                return self::IO_BASE_VAL_ERR;
+            }
         }
 
         // If is input direction value may change without notice
@@ -122,7 +126,7 @@ class IoManipulation implements IoManipulationInterface
         return $this->value;
     }
 
-    public function setValue(int $val)
+    public function setValue(int $val): int
     {
         if ($this->getDirection() === self::IO_BASE_DIR_IN)
             return self::IO_BASE_VAL_ERR;
