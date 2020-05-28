@@ -67,7 +67,12 @@ class IoManipulation implements IoManipulationInterface
     public function getDirection($renew = false)
     {
         if ($this->direction === null || $renew) {
-            $val = trim(\file_get_contents('/sys/class/gpio/gpio' . $this->io . '/direction'));
+            if ($val = \file_get_contents('/sys/class/gpio/gpio' . $this->io . '/direction')) {
+                $val = trim($val);
+            } else {
+                $this->outSystem->stdout("Unable to get direction ", OutSystem::LEVEL_NOTICE);
+                return self::IO_BASE_DIR_ERR;
+            }
     
             if ($val === self::IO_BASE_DIR_IN) 
                 $this->direction = self::IO_BASE_DIR_IN;

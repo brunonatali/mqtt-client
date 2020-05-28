@@ -53,7 +53,10 @@ class MqttService implements MqttServiceInterface
     {
         $this->connectToBroker();
 
-        $this->hid->start($this->postSensor);
+        $me = &$this;
+        $this->hid->start(function ($sensor, $value) use ($me) {
+            $this->postSensor($sensor, $value);
+        });
 
         $this->loop->run();
     }
@@ -81,6 +84,7 @@ class MqttService implements MqttServiceInterface
             // Subscribe to all configs
             $this->subscribe(self::MQTT_TENANT . '/config/+/' . self::MQTT_CLIENT_ID);
 
+            // TEST -------*-----*----- REMOVE THIS AFTER TESTS
             $me = &$this;
             $this->loop->addPeriodicTimer(5.0, function () use ($me) {
                 $me->postSensor('ai01', 4095);
