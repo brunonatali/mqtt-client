@@ -57,7 +57,6 @@ class HID implements HIDInterface
     */
     public function registerInterface($interface, $callback)
     {
-        $this->outSystem->stdout("open() first.", OutSystem::LEVEL_NOTICE);
         switch ($interface['type']) {
             case self::HID_TYPE_IO:
                 $gpio = $interface['gpio'];
@@ -105,5 +104,6 @@ class HID implements HIDInterface
                 break;
         }
 
+        $this->outSystem->stdout($out, OutSystem::LEVEL_NOTICE);
     }
 }
