@@ -48,9 +48,10 @@ class HID implements HIDInterface
      * @ $interface - [
      *      'name' => 'DI1',
      *      'pin' => 'P8-4',
-     *      'gpio' => 39,
-     *      'type' => self::HID_TYPE_IO,
-     *      'direction' => self::HID_DEFAULT_DIRECTION,
+     *      'gpio' => 39, // For gpio only
+     *      'index' => 0, // For AD only
+     *      'type' => self::HID_TYPE_IO, // self::HID_TYPE_AD
+     *      'direction' => self::HID_DEFAULT_DIRECTION, // For gpio only
      *      'acquisition_type' => self::HID_DEFAULT_ACQ_TYPE,
      *      'time' => self::HID_DEFAULT_ACQ_TIME
      *  ]
@@ -81,29 +82,61 @@ class HID implements HIDInterface
                     )
                 ];
 
-                if ($interface['acquisition_type'] === self::HID_ACQ_TYPE_POLLING) {
-                    $time = intval($interface['time']);
-                    if ($time >= 1) {
-                        $this->interfaces[ $gpio ]['timer'] = $this->loop->addPeriodicTimer(
-                            $time,
-                            function () use ($gpio, $callback) {
-                                $callback(
-                                    $this->interfaces[ $gpio ]['config']['name'], // Use name instead gpio value
-                                    $this->interfaces[ $gpio ]['dev']->getValue()
-                                );
-                            }
-                        );
-                    }
-                }
+                $this->registerInterfaceAcquisition($gpio);
 
                 $this->interfacesByNick[ $interface['name'] ] = &$this->interfaces[ $gpio ];
                 break;
             
             case self::HID_TYPE_AD:
+                $index = $interface['index'];
+
+                $out = 'Interface ';
+                if (isset($this->interfaces[ $index ])) {
+                    $out .= "'$index (" . $this->interfaces[ $index ]['config']['name'] . ")' reconfigured";
+                    $this->loop->cancelTimer($this->interfaces[ $index ]['timer']);
+                } else {
+                    $out .= "'$index (" . $interface['name'] . ")' configured";
+                }
+
+                $this->interfaces[ $index ] = [
+                    'config' => $interface,
+                    'dev' => new AdManipulation(
+                        $index,
+                        true, 
+                        array_merge(
+                            $this->sysConfig, 
+                            ['alias' => $interface['name']] 
+                        )
+                    )
+                ];
+
+                $this->registerInterfaceAcquisition($index);
+
+                $this->interfacesByNick[ $interface['name'] ] = &$this->interfaces[ $index ];
 
                 break;
         }
 
         $this->outSystem->stdout($out, OutSystem::LEVEL_NOTICE);
+    }
+
+    private function registerInterfaceAcquisition($nuber)
+    {
+        $interface = &$this->interfaces[ $nuber ]['config'];
+
+        if ($interface['acquisition_type'] === self::HID_ACQ_TYPE_POLLING) {
+            $time = intval($interface['time']);
+            if ($time >= 1) {
+                $this->interfaces[ $nuber ]['timer'] = $this->loop->addPeriodicTimer(
+                    $time,
+                    function () use ($nuber, $callback) {
+                        $callback(
+                            $this->interfaces[ $nuber ]['config']['name'], // Use name instead gpio value
+                            $this->interfaces[ $nuber ]['dev']->getValue()
+                        );
+                    }
+                );
+            }
+        }
     }
 }
