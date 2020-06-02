@@ -25,6 +25,8 @@ class MqttService implements MqttServiceInterface
     private $server;
     private $hid;
 
+    private $dns;
+
     Protected $outSystem;
     
     function __construct()
@@ -42,9 +44,7 @@ class MqttService implements MqttServiceInterface
 
         $this->hid = new HID($this->loop, $config);
         
-        $dnsResolverFactory = new \React\Dns\Resolver\Factory();
-        $connector = new DnsConnector(new TcpConnector($this->loop), $dnsResolverFactory->createCached('8.8.8.8', $this->loop));
-        $this->client = new ReactMqttClient($connector, $this->loop);
+        $this->dns = self::MQTT_DEFAULT_DNS;
 
         $this->configureCallbacks();
     }
@@ -53,28 +53,209 @@ class MqttService implements MqttServiceInterface
     {
         $this->connectToBroker();
 
-        $me = &$this;
-        $this->hid->start(function ($sensor, $value) use ($me) {
+        $this->hid->start(function ($sensor, $value) {
             $this->postSensor($sensor, $value);
         });
 
         $this->loop->run();
     }
 
-    private function connectToBroker()
+    // '#'
+    public function subscribe($topic)
     {
+        if ($this->client->isConnected()) {
+            $this->client->subscribe(new DefaultSubscription($topic))
+                ->then(function (Subscription $subscription) {
+                    $this->outSystem->stdout("Subscribed: " . $subscription->getFilter(), OutSystem::LEVEL_NOTICE);
+                })
+                ->otherwise(function (\Exception $e) {
+                    $this->outSystem->stdout("Subscription error: " . $e->getMessage(), OutSystem::LEVEL_NOTICE);
+                });
+
+            return true;
+        }
+
+        return false;
+    }
+
+    // 'sensors/humidity', '55%'
+    public function publish($topic, $value)
+    {
+        if ($this->client->isConnected()) {
+            $this->client->publish(new DefaultMessage($topic, $value))
+                ->then(function (Message $message) {
+                    $this->outSystem->stdout("Published: " . $message->getTopic() . ' => ' . $message->getPayload(), OutSystem::LEVEL_NOTICE);
+                })
+                ->otherwise(function (\Exception $e) {
+                    $this->outSystem->stdout("Publish error: " . $e->getMessage(), OutSystem::LEVEL_NOTICE);
+                });
+
+            return true;
+        }
+
+        return false;
+    }
+
+    public function postSensor($sensor, $value)
+    {
+        $topic = self::MQTT_TENANT  . '/sensors/' . self::MQTT_CLIENT_ID;
+        $value = [
+            'sensor' => $sensor,
+            'value' => $value,
+            'ts' => \time()
+        ];
+
+        return $this->publish($topic, \json_encode($value));
+    }
+
+    public function configureByJson($config)
+    {
+        if (!isset($config['user']))
+            return "No user defined";
+
+        $user = $config['user'];
+        unset($config['user']);
+
+        foreach ($config as $key => $conf) {
+            switch ($key) {
+                case 'eth':
+                    if (!isset($conf['active']))
+                        return "Misconfigured activation";
+
+                        if ($conf['active']) {
+                            
+                            if (isset($conf['dns1']))
+                                if (!$this->setDns($conf['dns1']))
+                                    return "Misconfigured dns1";
+                                    
+                        } else {
+    
+                        }
+
+                    break;
+                case 'wifi':
+                    if (!isset($conf['active']))
+                        return "Misconfigured activation";
+
+                    if ($conf['active']) {
+                        
+                        if (isset($conf['dns1']))
+                            if (!$this->setDns($conf['dns1']))
+                                return "Misconfigured dns1";
+
+                    } else {
+
+                    }
+
+                    break;
+                case 'broker':
+                    $this->connectToBroker($conf);
+                    break;
+                
+                default: // Sensor
+                    if (!isset($conf['sensor']))
+                        return "Misconfigured sensor";
+                    
+                    if (!isset($conf['period']))
+                        return "Misconfigured period";
+                        
+                    if (!isset($conf['ts']))
+                        return "Misconfigured ts";    
+
+                    if ($conf['sensor'] === 'global') {
+                        foreach ($this->hid->getInterfaceByName(true) as $interface) {
+                            $interface['time'] = $conf['period'];
+                            $this->hid->registerInterface(
+                                $interface, 
+                                function ($sensor, $value) {
+                                    $this->postSensor($sensor, $value);
+                                }
+                            );
+                        }
+
+                        break;
+                    }
+                        
+                    if (($interface = $this->hid->getInterfaceByName($conf['sensor'])) === false)
+                        return "Mismatch sensor";
+
+                    $interface['time'] = $conf['period'];
+                    $this->hid->registerInterface(
+                        $interface, 
+                        function ($sensor, $value) {
+                            $this->postSensor($sensor, $value);
+                        }
+                    );
+                    break;
+            }
+        }
+
+        return true;
+    }
+
+    private function setDns($dns): bool
+    {
+        if (!\filter_var($dns, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4))
+            return false;
+        
+        $this->dns = $dns;
+
+        return true;
+    }
+
+    private function createClient()
+    {
+        $dnsResolverFactory = new \React\Dns\Resolver\Factory();
+        $connector = new DnsConnector(new TcpConnector($this->loop), $dnsResolverFactory->createCached($this->dns, $this->loop));
+        $this->client = new ReactMqttClient($connector, $this->loop);
+    }
+
+    private function connectToBroker($config = [])
+    {
+        if (!isset($config['uri']))
+            $config['uri'] = self::MQTT_BROKER_URI;
+            
+        if (!isset($config['port']))
+            $config['port'] = self::MQTT_BROKER_PORT;
+
+        if (!isset($config['user']))
+            $config['user'] = self::MQTT_USER_NAME;
+
+        if (!isset($config['password']))
+            $config['password'] = self::MQTT_PASSWORD;
+
+        if (is_object($this->client) && $this->client->isConnected()) {
+            $this->outSystem->stdout("Disconnecting client first ...", OutSystem::LEVEL_NOTICE);
+
+            $this->client->disconnect()->then( function () use ($config) {
+                $this->connectToBroker($config);
+            }, function ($e) {
+                $this->outSystem->stdout("Disconnect fail, rescheduling to 10s ", OutSystem::LEVEL_NOTICE);
+
+                $this->loop->addTimer(10, function () use ($config) {
+                    $this->connectToBroker($config);
+                });
+
+                var_dump($e);
+            });
+
+            return;
+        }
+
+        $this->createClient();
+
         $this->outSystem->stdout(
-            "Connecting to: " . self::MQTT_BROKER_URI . 
-                (self::MQTT_BROKER_PORT !== null ? ':' . self::MQTT_BROKER_PORT : ':1883'), 
+            "Connecting to: " . $config['uri'] . 
+                ($config['port'] !== null ? ':' . $config['port'] : ':1883'), 
             OutSystem::LEVEL_NOTICE
         );
             
         $this->client->connect(
-            self::MQTT_BROKER_URI,
-            (self::MQTT_BROKER_PORT !== null ? self::MQTT_BROKER_PORT : 1883),
+            $config['uri'],
+            ($config['port'] !== null ? $config['port'] : 1883),
             new DefaultConnection(
-                (self::MQTT_USER_NAME !== null && self::MQTT_PASSWORD !== null ? self::MQTT_USER_NAME : ''), 
-                (self::MQTT_USER_NAME !== null && self::MQTT_PASSWORD !== null ? self::MQTT_PASSWORD : ''), 
+                ($config['user'] !== null && $config['password'] !== null ? $config['user'] : ''), 
+                ($config['user'] !== null && $config['password'] !== null ? $config['password'] : ''), 
                 null,
                 self::MQTT_CLIENT_ID
             )
@@ -131,6 +312,10 @@ class MqttService implements MqttServiceInterface
             );
 
             if (is_array($data = \json_decode($data, true))) {
+                if (!is_bool($result = $this->configureByJson($data)))
+                    $this->outSystem->stdout( "Error config: $result" , OutSystem::LEVEL_NOTICE);
+                else 
+                    $this->outSystem->stdout( "Configured." , OutSystem::LEVEL_NOTICE);
 
             } else {
                 $this->outSystem->stdout( "Wrong data" , OutSystem::LEVEL_NOTICE);
@@ -144,53 +329,5 @@ class MqttService implements MqttServiceInterface
         $this->client->on('error', function (\Exception $e){
             $this->outSystem->stdout("Error: " . $e->getMessage(), OutSystem::LEVEL_NOTICE);
         });
-    }
-
-    // '#'
-    public function subscribe($topic)
-    {
-        if ($this->client->isConnected()) {
-            $this->client->subscribe(new DefaultSubscription($topic))
-                ->then(function (Subscription $subscription) {
-                    $this->outSystem->stdout("Subscribed: " . $subscription->getFilter(), OutSystem::LEVEL_NOTICE);
-                })
-                ->otherwise(function (\Exception $e) {
-                    $this->outSystem->stdout("Subscription error: " . $e->getMessage(), OutSystem::LEVEL_NOTICE);
-                });
-
-            return true;
-        }
-
-        return false;
-    }
-
-    // 'sensors/humidity', '55%'
-    public function publish($topic, $value)
-    {
-        if ($this->client->isConnected()) {
-            $this->client->publish(new DefaultMessage($topic, $value))
-                ->then(function (Message $message) {
-                    $this->outSystem->stdout("Published: " . $message->getTopic() . ' => ' . $message->getPayload(), OutSystem::LEVEL_NOTICE);
-                })
-                ->otherwise(function (\Exception $e) {
-                    $this->outSystem->stdout("Publish error: " . $e->getMessage(), OutSystem::LEVEL_NOTICE);
-                });
-
-            return true;
-        }
-
-        return false;
-    }
-
-    public function postSensor($sensor, $value)
-    {
-        $topic = self::MQTT_TENANT  . '/sensors/' . self::MQTT_CLIENT_ID;
-        $value = [
-            'sensor' => $sensor,
-            'value' => $value,
-            'ts' => \time()
-        ];
-
-        return $this->publish($topic, \json_encode($value));
     }
 }
