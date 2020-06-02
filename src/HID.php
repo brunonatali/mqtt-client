@@ -120,6 +120,19 @@ class HID implements HIDInterface
         $this->outSystem->stdout($out, OutSystem::LEVEL_NOTICE);
     }
 
+    public function getInterfaceByName($name) 
+    {
+        if ($name === true)
+            return self::HID_INTERFACES;
+            
+        foreach (self::HID_INTERFACES as $interface) {
+            if ($interface['name' === $name])
+                return $interface;
+        }
+
+        return false;
+    }
+
     private function registerInterfaceAcquisition($nuber, $callback)
     {
         $interface = &$this->interfaces[ $nuber ]['config'];
