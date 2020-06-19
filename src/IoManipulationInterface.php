@@ -12,6 +12,7 @@ interface IoManipulationInterface
     const IO_BASE_VAL_DOWN = 0;
     const IO_BASE_VAL_ERR = 2;
 
+    /*
     public function open(): bool;
 
     public function getDirection($renew = false): string;
@@ -21,4 +22,5 @@ interface IoManipulationInterface
     public function getValue($renew = false): int;
 
     public function setValue(int $val): int;
+    */
 }
