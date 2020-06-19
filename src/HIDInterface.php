@@ -11,7 +11,7 @@ interface HIDInterface extends IoManipulationInterface
     const HID_ACQ_TYPE_TRIGGER_VALUE = 0x21; 
     const HID_ACQ_TYPE_TRIGGER_CHANGE = 0x22;
 
-    const HID_DEFAULT_ACQ_TIME = 5;
+    const HID_DEFAULT_ACQ_TIME = 60; // 60 seconds
     const HID_DEFAULT_DIRECTION = self::IO_BASE_DIR_IN;
     const HID_DEFAULT_ACQ_TYPE = self::HID_ACQ_TYPE_POLLING;
 
