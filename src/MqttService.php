@@ -205,7 +205,7 @@ class MqttService implements MqttServiceInterface
         return true;
     }
 
-    private function createClient()
+    private function createClient($config)
     {
         $dnsResolverFactory = new \React\Dns\Resolver\Factory();
         $connector = new DnsConnector(new TcpConnector($this->loop), $dnsResolverFactory->createCached($this->dns, $this->loop));
@@ -261,7 +261,7 @@ class MqttService implements MqttServiceInterface
             $this->outSystem->stdout("Warning: " . $e->getMessage(), OutSystem::LEVEL_NOTICE);
         });
         
-        $this->client->on('error', function (\Exception $e){
+        $this->client->on('error', function (\Exception $e) use ($config) {
             $this->outSystem->stdout("Broker error: " . $e->getMessage() .
                 ' Scheduling error handler to 10s ...' , OutSystem::LEVEL_NOTICE);
 
@@ -300,11 +300,12 @@ class MqttService implements MqttServiceInterface
                         $this->connectToBroker($config);
                     });
                 });
+                
+                return;
             }
 
-            return;
         } else {
-            $this->createClient();
+            $this->createClient($config);
         }
 
         $this->outSystem->stdout(
@@ -328,14 +329,14 @@ class MqttService implements MqttServiceInterface
             // Subscribe to all configs
             $this->subscribe(self::MQTT_TENANT . '/config/+/' . self::MQTT_CLIENT_ID);
                 
-        }, function ($e) {
+        }/*, function ($e) use ($config) { // Check if necessary -> Error already handled in createClient()
             $this->outSystem->stdout("Broker connect error: " . $e->getMessage() .
                 ' Rescheduling to 10s ...' , OutSystem::LEVEL_NOTICE);
 
             $this->loop->addTimer(10, function () use ($config) {
                 $this->connectToBroker($config);
             });
-        });
+        }*/);
     }
 
     private function configureCallbacks()
