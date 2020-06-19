@@ -16,4 +16,6 @@ interface MqttServiceInterface extends MainInterface
     const MQTT_USER_NAME = 'user';
     const MQTT_PASSWORD = '1234';
     const MQTT_CLIENT_ID = '1234567890abcdef12';
+
+    const MQTT_RECONNECT_TO = 10; // seconds
 }

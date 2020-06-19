@@ -28,6 +28,7 @@ class MqttService implements MqttServiceInterface
     private $dns;
 
     private $id;
+    private $reconnectionScheduled;
 
     Protected $outSystem;
     
@@ -54,6 +55,8 @@ class MqttService implements MqttServiceInterface
         $this->hid = new HID($this->loop, $config);
         
         $this->dns = self::MQTT_DEFAULT_DNS;
+
+        $this->reconnectionScheduled = false;
     }
 
     public function start()
@@ -218,6 +221,8 @@ class MqttService implements MqttServiceInterface
         
         $this->client->on('close', function () {
             $this->outSystem->stdout("Closed -> " . $this->client->getHost() . ':' . $this->client->getPort(), OutSystem::LEVEL_NOTICE);
+       
+            $this->scheduleReconnection();
         });
         
         $this->client->on('connect', function (Connection $connection) {
@@ -228,6 +233,8 @@ class MqttService implements MqttServiceInterface
         $this->client->on('disconnect', function (Connection $connection) {
             // Broker disconnected
             $this->outSystem->stdout("Broker disconnected: " . $connection->getClientID(), OutSystem::LEVEL_NOTICE);
+
+            $this->scheduleReconnection();
         });
         
         $this->client->on('message', function (Message $message) {
@@ -265,9 +272,22 @@ class MqttService implements MqttServiceInterface
             $this->outSystem->stdout("Broker error: " . $e->getMessage() .
                 ' Scheduling error handler to 10s ...' , OutSystem::LEVEL_NOTICE);
 
-            $this->loop->addTimer(10, function () use ($config) {
-                $this->connectToBroker($config);
-            });
+            $this->scheduleReconnection();
+        });
+    }
+
+    /**
+     * Help handle multiple errors in same time
+    */
+    private function scheduleReconnection()
+    {
+        if ($this->reconnectionScheduled)
+            return;
+
+        $this->reconnectionScheduled = true;
+
+        $this->loop->addTimer(self::MQTT_RECONNECT_TO, function () use ($config) {
+            $this->connectToBroker($config);
         });
     }
 
