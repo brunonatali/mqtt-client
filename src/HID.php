@@ -126,7 +126,7 @@ class HID implements HIDInterface
             return self::HID_INTERFACES;
             
         foreach (self::HID_INTERFACES as $interface) {
-            if ($interface['name' === $name])
+            if ($interface['name'] === $name)
                 return $interface;
         }
 
