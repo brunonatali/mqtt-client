@@ -32,6 +32,7 @@ class MqttService implements MqttServiceInterface
     function __construct()
     {
         $this->loop = Factory::create();
+        $this->client = null;
 
         $config = [
             'outSystemName' => 'MqttSrv',
@@ -45,13 +46,13 @@ class MqttService implements MqttServiceInterface
         $this->hid = new HID($this->loop, $config);
         
         $this->dns = self::MQTT_DEFAULT_DNS;
-
-        $this->configureCallbacks();
     }
 
     public function start()
     {
         $this->connectToBroker();
+
+        // $this->configureCallbacks();
 
         $this->hid->start(function ($sensor, $value) {
             $this->postSensor($sensor, $value);
@@ -92,6 +93,7 @@ class MqttService implements MqttServiceInterface
 
             return true;
         }
+        $this->outSystem->stdout("[publish] Broker disconnected, aborting ...", OutSystem::LEVEL_NOTICE);
 
         return false;
     }
@@ -208,74 +210,7 @@ class MqttService implements MqttServiceInterface
         $dnsResolverFactory = new \React\Dns\Resolver\Factory();
         $connector = new DnsConnector(new TcpConnector($this->loop), $dnsResolverFactory->createCached($this->dns, $this->loop));
         $this->client = new ReactMqttClient($connector, $this->loop);
-    }
-
-    private function connectToBroker($config = [])
-    {
-        if (!isset($config['uri']))
-            $config['uri'] = self::MQTT_BROKER_URI;
-            
-        if (!isset($config['port']))
-            $config['port'] = self::MQTT_BROKER_PORT;
-
-        if (!isset($config['user']))
-            $config['user'] = self::MQTT_USER_NAME;
-
-        if (!isset($config['password']))
-            $config['password'] = self::MQTT_PASSWORD;
-
-        if (is_object($this->client) && $this->client->isConnected()) {
-            $this->outSystem->stdout("Disconnecting client first ...", OutSystem::LEVEL_NOTICE);
-
-            $this->client->disconnect()->then( function () use ($config) {
-                $this->connectToBroker($config);
-            }, function ($e) {
-                $this->outSystem->stdout("Disconnect fail, rescheduling to 10s ", OutSystem::LEVEL_NOTICE);
-
-                $this->loop->addTimer(10, function () use ($config) {
-                    $this->connectToBroker($config);
-                });
-
-                var_dump($e);
-            });
-
-            return;
-        }
-
-        $this->createClient();
-
-        $this->outSystem->stdout(
-            "Connecting to: " . $config['uri'] . 
-                ($config['port'] !== null ? ':' . $config['port'] : ':1883'), 
-            OutSystem::LEVEL_NOTICE
-        );
-            
-        $this->client->connect(
-            $config['uri'],
-            ($config['port'] !== null ? $config['port'] : 1883),
-            new DefaultConnection(
-                ($config['user'] !== null && $config['password'] !== null ? $config['user'] : ''), 
-                ($config['user'] !== null && $config['password'] !== null ? $config['password'] : ''), 
-                null,
-                self::MQTT_CLIENT_ID
-            )
-        )
-        ->then( function () {
-
-            // Subscribe to all configs
-            $this->subscribe(self::MQTT_TENANT . '/config/+/' . self::MQTT_CLIENT_ID);
-                
-        }, function ($e) {
-            var_dump($e);
-        });
-    }
-
-    private function configureCallbacks()
-    {
-
-        $this->server->onData(function ($data, $id) {
-
-        });
+        
 
         $this->client->on('open', function () {
             $this->outSystem->stdout("Opened -> " . $this->client->getHost() . ':' . $this->client->getPort(), OutSystem::LEVEL_NOTICE);
@@ -327,7 +262,87 @@ class MqttService implements MqttServiceInterface
         });
         
         $this->client->on('error', function (\Exception $e){
-            $this->outSystem->stdout("Error: " . $e->getMessage(), OutSystem::LEVEL_NOTICE);
+            $this->outSystem->stdout("Broker error: " . $e->getMessage() .
+                ' Scheduling error handler to 10s ...' , OutSystem::LEVEL_NOTICE);
+
+            $this->loop->addTimer(10, function () use ($config) {
+                $this->connectToBroker($config);
+            });
+        });
+    }
+
+    private function connectToBroker($config = [])
+    {
+        if (!isset($config['uri']))
+            $config['uri'] = self::MQTT_BROKER_URI;
+            
+        if (!isset($config['port']))
+            $config['port'] = self::MQTT_BROKER_PORT;
+
+        if (!isset($config['user']))
+            $config['user'] = self::MQTT_USER_NAME;
+
+        if (!isset($config['password']))
+            $config['password'] = self::MQTT_PASSWORD;
+
+        if (is_object($this->client)) {
+
+            if ($this->client->isConnected()) {
+                $this->outSystem->stdout("Disconnecting client first ...", OutSystem::LEVEL_NOTICE);
+    
+                $this->client->disconnect()->then( function () use ($config) {
+                    $this->connectToBroker($config);
+                }, function ($e) {
+                    $this->outSystem->stdout("Disconnect fail, rescheduling to 10s. Detailed error: " .
+                        $e->getMessage() , OutSystem::LEVEL_NOTICE);
+    
+                    $this->loop->addTimer(10, function () use ($config) {
+                        $this->connectToBroker($config);
+                    });
+                });
+            }
+
+            return;
+        } else {
+            $this->createClient();
+        }
+
+        $this->outSystem->stdout(
+            "Connecting to: " . $config['uri'] . 
+                ($config['port'] !== null ? ':' . $config['port'] : ':1883'), 
+            OutSystem::LEVEL_NOTICE
+        );
+            
+        $this->client->connect(
+            $config['uri'],
+            ($config['port'] !== null ? $config['port'] : 1883),
+            new DefaultConnection(
+                ($config['user'] !== null && $config['password'] !== null ? $config['user'] : ''), 
+                ($config['user'] !== null && $config['password'] !== null ? $config['password'] : ''), 
+                null,
+                self::MQTT_CLIENT_ID
+            )
+        )
+        ->then( function () {
+
+            // Subscribe to all configs
+            $this->subscribe(self::MQTT_TENANT . '/config/+/' . self::MQTT_CLIENT_ID);
+                
+        }, function ($e) {
+            $this->outSystem->stdout("Broker connect error: " . $e->getMessage() .
+                ' Rescheduling to 10s ...' , OutSystem::LEVEL_NOTICE);
+
+            $this->loop->addTimer(10, function () use ($config) {
+                $this->connectToBroker($config);
+            });
+        });
+    }
+
+    private function configureCallbacks()
+    {
+
+        $this->server->onData(function ($data, $id) {
+
         });
     }
 }
