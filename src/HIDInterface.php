@@ -18,16 +18,16 @@ interface HIDInterface extends IoManipulationInterface
     const HID_INTERFACES = [
         [
             'name' => 'DI1',
-            'pin' => 'P8-4',
-            'gpio' => 39,
+            'pin' => 'P8-12',
+            'gpio' => 44,
             'type' => self::HID_TYPE_IO,
             'direction' => self::HID_DEFAULT_DIRECTION,
             'acquisition_type' => self::HID_DEFAULT_ACQ_TYPE,
             'time' => self::HID_DEFAULT_ACQ_TIME
         ], [
             'name' => 'DI2',
-            'pin' => 'P8-6',
-            'gpio' => 35,
+            'pin' => 'P8-16',
+            'gpio' => 46,
             'type' => self::HID_TYPE_IO,
             'direction' => self::HID_DEFAULT_DIRECTION,
             'acquisition_type' => self::HID_DEFAULT_ACQ_TYPE,
