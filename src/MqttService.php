@@ -127,76 +127,68 @@ class MqttService implements MqttServiceInterface
         unset($config['user']);
 
         foreach ($config as $key => $conf) {
-            switch ($key) {
-                case 'eth':
-                    if (!isset($conf['active']))
-                        return "Misconfigured activation";
+            if ($key === 'eth') {
+                if (!isset($conf['active']))
+                return "Misconfigured activation";
 
-                        if ($conf['active']) {
-                            
-                            if (isset($conf['dns1']))
-                                if (!$this->setDns($conf['dns1']))
-                                    return "Misconfigured dns1";
-                                    
-                        } else {
-    
-                        }
-
-                    break;
-                case 'wifi':
-                    if (!isset($conf['active']))
-                        return "Misconfigured activation";
-
-                    if ($conf['active']) {
-                        
-                        if (isset($conf['dns1']))
-                            if (!$this->setDns($conf['dns1']))
-                                return "Misconfigured dns1";
-
-                    } else {
-
-                    }
-
-                    break;
-                case 'broker':
-                    $this->connectToBroker($conf);
-                    break;
-                
-                default: // Sensor
-                    if (!isset($conf['sensor']))
-                        return "Misconfigured sensor";
+                if ($conf['active']) {
                     
-                    if (!isset($conf['period']))
-                        return "Misconfigured period";
-                        
-                    if (!isset($conf['ts']))
-                        return "Misconfigured ts";    
+                    if (isset($conf['dns1']))
+                        if (!$this->setDns($conf['dns1']))
+                            return "Misconfigured dns1";
+                            
+                } else {
 
-                    if ($conf['sensor'] === 'global') {
-                        foreach ($this->hid->getInterfaceByName(true) as $interface) {
-                            $interface['time'] = $conf['period'];
-                            $this->hid->registerInterface(
-                                $interface, 
-                                function ($sensor, $value) {
-                                    $this->postSensor($sensor, $value);
-                                }
-                            );
-                        }
+                }
+            } else if ($key === 'wifi') {
+                if (!isset($conf['active']))
+                    return "Misconfigured activation";
 
-                        break;
+                if ($conf['active']) {
+                    
+                    if (isset($conf['dns1']))
+                        if (!$this->setDns($conf['dns1']))
+                            return "Misconfigured dns1";
+
+                } else {
+
+                }
+            } else if ($key === 'broker') {
+                $this->connectToBroker($conf);
+            } else {// Sensor
+                if (!isset($conf['sensor']))
+                    return "Misconfigured sensor";
+                
+                if (!isset($conf['period']))
+                    return "Misconfigured period";
+                    
+                if (!isset($conf['ts']))
+                    return "Misconfigured ts";    
+
+                if ($conf['sensor'] === 'global') {
+                    foreach ($this->hid->getInterfaceByName(true) as $interface) {
+                        $interface['time'] = $conf['period'];
+                        $this->hid->registerInterface(
+                            $interface, 
+                            function ($sensor, $value) {
+                                $this->postSensor($sensor, $value);
+                            }
+                        );
                     }
-                        
-                    if (($interface = $this->hid->getInterfaceByName($conf['sensor'])) === false)
-                        return "Mismatch sensor";
 
-                    $interface['time'] = $conf['period'];
-                    $this->hid->registerInterface(
-                        $interface, 
-                        function ($sensor, $value) {
-                            $this->postSensor($sensor, $value);
-                        }
-                    );
                     break;
+                }
+                    
+                if (($interface = $this->hid->getInterfaceByName($conf['sensor'])) === false)
+                    return "Mismatch sensor";
+
+                $interface['time'] = $conf['period'];
+                $this->hid->registerInterface(
+                    $interface, 
+                    function ($sensor, $value) {
+                        $this->postSensor($sensor, $value);
+                    }
+                );
             }
         }
 
