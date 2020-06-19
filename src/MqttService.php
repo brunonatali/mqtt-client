@@ -27,12 +27,20 @@ class MqttService implements MqttServiceInterface
 
     private $dns;
 
+    private $id;
+
     Protected $outSystem;
     
     function __construct()
     {
         $this->loop = Factory::create();
         $this->client = null;
+
+        $id = @\file_get_contents('/etc/desh/app/serial');
+        if ($id === false)
+            $this->id = self::MQTT_CLIENT_ID;
+        else
+            $this->id = \trim($id);
 
         $config = [
             'outSystemName' => 'MqttSrv',
@@ -100,7 +108,7 @@ class MqttService implements MqttServiceInterface
 
     public function postSensor($sensor, $value)
     {
-        $topic = self::MQTT_TENANT  . '/sensors/' . self::MQTT_CLIENT_ID;
+        $topic = self::MQTT_TENANT  . '/sensors/' . $this->id;
         $value = [
             'sensor' => $sensor,
             'value' => $value,
@@ -300,7 +308,7 @@ class MqttService implements MqttServiceInterface
                         $this->connectToBroker($config);
                     });
                 });
-                
+
                 return;
             }
 
@@ -321,13 +329,13 @@ class MqttService implements MqttServiceInterface
                 ($config['user'] !== null && $config['password'] !== null ? $config['user'] : ''), 
                 ($config['user'] !== null && $config['password'] !== null ? $config['password'] : ''), 
                 null,
-                self::MQTT_CLIENT_ID
+                $this->id
             )
         )
         ->then( function () {
 
             // Subscribe to all configs
-            $this->subscribe(self::MQTT_TENANT . '/config/+/' . self::MQTT_CLIENT_ID);
+            $this->subscribe(self::MQTT_TENANT . '/config/+/' . $this->id);
                 
         }/*, function ($e) use ($config) { // Check if necessary -> Error already handled in createClient()
             $this->outSystem->stdout("Broker connect error: " . $e->getMessage() .
