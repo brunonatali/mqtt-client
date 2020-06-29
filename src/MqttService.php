@@ -330,7 +330,7 @@ class MqttService implements MqttServiceInterface
 
         $this->outSystem->stdout(
             "Connecting to: " . $config['uri'] . 
-                (is_integer($config['port']) ? ':' . $config['port'] : ':1883'), 
+                (is_integer($config['port']) && $config['port'] ? ':' . $config['port'] : ':1883'), 
             OutSystem::LEVEL_NOTICE
         );
             
