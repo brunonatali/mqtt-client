@@ -44,7 +44,7 @@ class MqttService implements MqttServiceInterface
         $this->loop = Factory::create();
 
         // Get serial
-        $id = @\file_get_contents('/etc/desh/app/serial');
+        $id = @\file_get_contents('/etc/desh/serial');
         if ($id === false)
             $this->id = self::MQTT_CLIENT_ID;
         else
