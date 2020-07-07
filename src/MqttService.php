@@ -374,8 +374,8 @@ class MqttService implements MqttServiceInterface
 
         $this->reconnectionScheduled = true;
 
-        $this->loop->addTimer(self::MQTT_RECONNECT_TO, function () use ($config) {
-            $this->connectToBroker($config);
+        $this->loop->addTimer(self::MQTT_RECONNECT_TO, function () {
+            $this->connectToBroker();
         });
     }
 
