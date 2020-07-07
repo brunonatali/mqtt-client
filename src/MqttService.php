@@ -375,6 +375,8 @@ class MqttService implements MqttServiceInterface
         $this->reconnectionScheduled = true;
 
         $this->loop->addTimer(self::MQTT_RECONNECT_TO, function () {
+            $this->reconnectionScheduled = false;
+
             $this->connectToBroker();
         });
     }
@@ -395,7 +397,7 @@ class MqttService implements MqttServiceInterface
         if (!isset($config['password']))
             $config['password'] = self::MQTT_PASSWORD;
 
-        if (is_object($this->client)) {
+        if (\is_object($this->client)) {
 
             if ($this->client->isConnected()) {
                 $this->outSystem->stdout("Disconnecting client first ...", OutSystem::LEVEL_NOTICE);
@@ -439,6 +441,8 @@ class MqttService implements MqttServiceInterface
             // Subscribe to all configs
             $this->subscribe($config['tenant']. '/config/+/' . $this->id);
                 
+        }, function () { // Force reconnection on error
+            $this->scheduleReconnection();
         });
     }
 
@@ -481,7 +485,7 @@ class MqttService implements MqttServiceInterface
         });
 
         $this->hidClient->onClose(function () {
-            //echo "CLOSED !!! " .PHP_EOL;
+            $this->outSystem->stdout("Connection to HID closed", OutSystem::LEVEL_NOTICE);
         });
     }
 
