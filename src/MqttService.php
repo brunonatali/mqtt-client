@@ -11,6 +11,7 @@ use BrunoNatali\Tools\OutSystem;
 use BrunoNatali\Tools\File\JsonFile;
 use BrunoNatali\Tools\Communication\SimpleUnixServer;
 use BrunoNatali\Tools\Communication\SimpleUnixClient;
+use BrunoNatali\Tools\Data\Conversation\UnixServicePort;
 use BrunoNatali\WebInterface\HIDInterface;
 
 use BinSoul\Net\Mqtt\Message;
@@ -28,6 +29,7 @@ class MqttService implements MqttServiceInterface
     private $client;
     private $hidClient;
     private $server;
+    private $service;
 
     private $config;
     private $sysConfig;
@@ -36,6 +38,8 @@ class MqttService implements MqttServiceInterface
     private $id;
     private $queueTO;
     private $reconnectionScheduled;
+    private $postSensorBuffer = [];
+    private $postSensorsTimer = null;
 
     Protected $outSystem;
     
@@ -71,6 +75,135 @@ class MqttService implements MqttServiceInterface
         $this->outSystem = new OutSystem($this->sysConfig);
 
         $this->reconnectionScheduled = false;
+        
+        $this->service = new UnixServicePort($this->loop, 'mqtt', $this->sysConfig);
+
+        /* NEED TO IMPLEMENT CONFIGURATION BY SERVICE PORT - IMPORTANT!!
+            $this->service->addParser(self::SERIAL_CONFIG_PORT, function($content, $id, $myServer) {
+                if (isset($content['port'])) {
+                    if (!$this->portExists($content['port'])) {
+                        $this->service->info = 'Port error ' . $content['port'];
+                        return false;
+                    }
+
+                    $port = $content['port'];
+                    unset($content['port']);
+
+                    $newConfig = [
+                        'config' => [
+                            $port => []
+                        ]
+                    ];
+
+                    foreach ($content as $key => $value) 
+                        if ($key === 'enabled') { 
+                            // Only bool values accepeted
+                            if (\is_bool($value)) {
+                                $newConfig['config'][$port]['enabled'] = $value;
+                            } else {
+                                $this->service->info = 'Enable error';
+                                return false;
+                            }
+                        } else if ($key === 'baud') {
+                            // Only int values accepeted & with specific range
+                            if (\is_int($value) && 
+                                $value >= self::SERIAL_MINIMUM_BAUD &&
+                                $value <= self::SERIAL_MAXIMUM_BAUD) {
+                                $newConfig['config'][$port]['baud'] = $value;
+                            } else {
+                                $this->service->info = 'Baud error';
+                                return false;
+                            }
+                        } else if ($key === 'bits') {
+                            // Only int values accepeted
+                            if (\is_int($value)) {
+                                $newConfig['config'][$port]['bits'] = $value;
+                            } else {
+                                $this->service->info = 'Bits error';
+                                return false;
+                            }
+                        } else if ($key === 'stop') {
+                            // Only int values accepeted
+                            if (\is_int($value)) {
+                                $newConfig['config'][$port]['stop'] = $value;
+                            } else {
+                                $this->service->info = 'Stop error';
+                                return false;
+                            }
+                        } else if ($key === 'parity') {
+                            // Only int values accepeted
+                            if (\is_int($value)) {
+                                $newConfig['config'][$port]['parity'] = $value;
+                            } else {
+                                $this->service->info = 'Parity error';
+                                return false;
+                            }
+                        } else if ($key === 'pack_len') {
+                            // Only int values accepeted
+                            if (\is_int($value)) {
+                                $newConfig['config'][$port]['pack_len'] = $value;
+                            } else {
+                                $this->service->info = 'pack_len error';
+                                return false;
+                            }
+                        } else if ($key === 'close_pack_time') {
+                            // Only int values accepeted
+                            if (\is_int($value)) {
+                                $newConfig['config'][$port]['close_pack_time'] = $value;
+                            } else {
+                                $this->service->info = 'close_pack_time error';
+                                return false;
+                            }
+                        } else if ($key === 'flow_ctrl') { 
+                            // Only bool values accepeted
+                            if (\is_bool($value)) {
+                                $newConfig['config'][$port]['flow_ctrl'] = $value;
+                            } else {
+                                $this->service->info = 'flow_ctrl error';
+                                return false;
+                            }
+                        }  else if ($key === 'remove_method') { 
+                            // Only bool values accepeted
+                            if (\is_bool($value)) {
+                                $newConfig['config'][$port]['data']['method'] = null;
+                            } else {
+                                $this->service->info = 'disable meth';
+                                return false;
+                            }
+                        } else {
+                            $this->service->info = "Unrecognized '$key'";
+                            return false; // Return if any provided value is not expected
+                        }
+                        
+                    if (!empty($newConfig['config'][$port])) {
+                        if ($this->saveConfig($newConfig)) {
+                            if ($this->close($port)) {
+                                $this->config['config'][ $port ] = 
+                                    $newConfig['config'][ $port ];
+
+                                if ($newConfig['config'][ $port ]['enabled'])
+                                    return $this->openPort($port);
+                                else
+                                    return true;
+                            } else {
+                                $this->service->info = "Close error";
+                            }
+                        } else {
+                            $this->service->info = "Save error";
+                        }
+                    } else {
+                        $this->service->info = "New config";
+                    }
+                } else {
+                    $this->service->info = "Undefined port";
+                }
+
+                if (!$this->service->info)
+                    $this->service->info = "General error";
+
+                return false;
+            });
+        */
     }
 
     private function loadConfig()
@@ -95,7 +228,7 @@ class MqttService implements MqttServiceInterface
         $this->loadConfig();
 
         $config = [
-            'mqtt_broker' => \array_merge($this->config, $conf)
+            'mqtt_broker' => \BrunoNatali\Tools\UsefulFunction::array_merge_recursive($this->config, $conf)
         ];
 
         if (JsonFile::saveArray( '/etc/desh/config.json', $config, 
@@ -112,6 +245,8 @@ class MqttService implements MqttServiceInterface
         $this->connectToBroker();
 
         $this->hidClient->connect();
+        
+        $this->service->start();
 
         $this->loop->run();
     }
@@ -137,6 +272,9 @@ class MqttService implements MqttServiceInterface
     // 'sensors/humidity', '55%'
     public function publish($topic, $value)
     {
+        if (empty($this->postSensorBuffer))
+            return;
+
         if ($this->client->isConnected()) {
             $this->client->publish(new DefaultMessage($topic, $value))
                 ->then(function (Message $message) {
@@ -155,14 +293,15 @@ class MqttService implements MqttServiceInterface
 
     public function postSensor($sensor, $value, $ts)
     {
-        $topic = $this->config['config']['tenant']  . '/sensors/' . $this->id;
         $value = [
             'sensor' => $sensor,
             'value' => $value,
             'ts' => $ts
         ];
 
-        return $this->publish($topic, \json_encode($value));
+        $this->postSensorBuffer[] = $value;
+
+        return true;
     }
 
     private function postConfig($type, $name, $value, $ts)
@@ -244,6 +383,12 @@ class MqttService implements MqttServiceInterface
                 }
             } else if ($key === 'broker') {
                 if ($this->saveConfig($conf)) {
+                    // Remove post sensors schedulle
+                    if ($this->postSensorsTimer !== null) {
+                        $this->loop->cancelTimer($this->postSensorsTimer);
+                        $this->postSensorsTimer = null;
+                    }
+
                     $this->loadConfig();
                     $this->connectToBroker();
                 } else {
@@ -302,7 +447,6 @@ class MqttService implements MqttServiceInterface
             $dnsResolverFactory->createCached($this->dns, $this->loop)
         );
         $this->client = new ReactMqttClient($connector, $this->loop);
-        
 
         $this->client->on('open', function () {
             $this->outSystem->stdout("Opened -> " . $this->client->getHost() . ':' . $this->client->getPort(), OutSystem::LEVEL_NOTICE);
@@ -443,6 +587,26 @@ class MqttService implements MqttServiceInterface
                 
         }, function () { // Force reconnection on error
             $this->scheduleReconnection();
+        });
+
+        // Schedule post sensors
+        $this->postSensorsTimer = $this->loop->
+            addPeriodicTimer($this->config['config']['post']['time'] , function() {
+            if (empty($this->postSensorBuffer))
+                return;
+
+            $this->outSystem->stdout("Broadcasting sensors", OutSystem::LEVEL_NOTICE);
+            
+            $data = \json_encode($this->postSensorBuffer);
+            
+            // Post sensors on mqtt server
+            $topic = $this->config['config']['tenant']  . '/sensors/' . $this->id;
+            $this->publish($topic, $data);
+
+            // Sent data to unix service clients too
+            $this->service->server->write($data);
+
+            $this->postSensorBuffer = []; // Empty buffer
         });
     }
 
