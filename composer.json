@@ -11,7 +11,6 @@
     "require": {
 			"php": ">=7.3",
 			"brunonatali/tools": ">=0.5",
-			"brunonatali/beagle-web-app": ">=0.1",
 			"react/socket": "^1.4",
 			"binsoul/net-mqtt-client-react": "0.7.2"
 	},
