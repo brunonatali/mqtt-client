@@ -1,12 +1,26 @@
 <?php declare(strict_types=1);
 
+/**
+ * 
+ * NOTAS
+ * 
+ * Número de linhas recuperadas da base de dados precisa ser maior que o número de sensores, 
+ *  se não uma coleta de todos os sensores no mesmo minuto irá fazer com que o sistema que 
+ *  reenvia os dados não publicados permaneça em loop infinito por não identificar corretamente 
+ *  o último segundo de publicação bem sucedida 
+ * 
+*/
+
+
 namespace BrunoNatali\MqttClient;
 
+use React\Promise\Deferred;
 use React\EventLoop\Factory;
 use React\Socket\DnsConnector;
 use React\Socket\TcpConnector;
 
 use BrunoNatali\Tools\Queue;
+use BrunoNatali\Tools\Mysql;
 use BrunoNatali\Tools\OutSystem;
 use BrunoNatali\Tools\File\JsonFile;
 use BrunoNatali\Tools\Communication\SimpleUnixServer;
@@ -26,10 +40,12 @@ class MqttService implements MqttServiceInterface
 {
     private $loop;
     private $queue;
+    private $publishQueue;
     private $client;
     private $hidClient;
     private $server;
     private $service;
+    private $mysql;
 
     private $config;
     private $sysConfig;
@@ -40,6 +56,7 @@ class MqttService implements MqttServiceInterface
     private $reconnectionScheduled;
     private $postSensorBuffer = [];
     private $postSensorsTimer = null;
+    private $postErrorSensor = true; // Starts with true to send every unsended
 
     Protected $outSystem;
     
@@ -63,6 +80,27 @@ class MqttService implements MqttServiceInterface
             "outSystemEnabled" => true
         ];
 
+        $dbCreddentials = JsonFile::readAsArray('/etc/desh/db.json');
+
+        // Using default user & password
+        $dbCreddentials += [
+            'USER' => 'root', 
+            'PASSWORD' => ''
+        ];
+
+        $this->mysql = new Mysql(
+            $this->loop,
+            \array_merge(
+                $this->sysConfig,
+                [
+                    'SERVER' => 'localhost',
+                    'SOLVE_PROBLEMS' => true, 
+                    'DB' => 'mqtt'
+                ],
+                $dbCreddentials
+            )
+        );
+
         $this->server = new SimpleUnixServer($this->loop, self::MQTT_SERVICE_SOCKET, $this->sysConfig);
 
         // Connect to HID 
@@ -71,6 +109,7 @@ class MqttService implements MqttServiceInterface
         $this->client = null; // Set MQTT client
 
         $this->queue = new Queue($this->loop);
+        $this->publishQueue = new Queue($this->loop);
 
         $this->outSystem = new OutSystem($this->sysConfig);
 
@@ -270,36 +309,198 @@ class MqttService implements MqttServiceInterface
     }
 
     // 'sensors/humidity', '55%'
-    public function publish($topic, $value)
+    public function publish($topic, $value, $ts = false)
     {
-        if (empty($this->postSensorBuffer))
-            return;
+        // if (empty($this->postSensorBuffer))
+        //    return \React\Promise\resolve(null);
 
         if ($this->client->isConnected()) {
-            $this->client->publish(new DefaultMessage($topic, $value))
-                ->then(function (Message $message) {
-                    $this->outSystem->stdout("Published: " . $message->getTopic() . ' => ' . $message->getPayload(), OutSystem::LEVEL_NOTICE);
-                })
-                ->otherwise(function (\Exception $e) {
-                    $this->outSystem->stdout("Publish error: " . $e->getMessage(), OutSystem::LEVEL_NOTICE);
-                });
+            $deferred = new Deferred();
 
-            return true;
+            $this->client->publish(new DefaultMessage($topic, $value))
+                ->then(function (Message $message) use ($topic, $value, $ts, $deferred) {
+
+                $this->outSystem->stdout(
+                    "Published: " . $message->getTopic() . ' => ' . $message->getPayload(), 
+                    OutSystem::LEVEL_NOTICE
+                );
+                
+                if (\is_int($ts)) { // If is from postUncommited()
+                    $this->mysql->insert(
+                        [
+                            'topic' => $topic,
+                            'len' => \strlen($value),
+                            'ts' => $ts,
+                            'real_ts' => \time()
+                        ],
+                        [
+                            'table' => 'post_history' 
+                        ]
+                    );
+                } else {
+
+                    if ($this->postUncommited()) { // Is something not commited to post
+                        $this->publishQueue->pause(); // Pause queue before add new
+                    } else {
+                        $this->publishQueue->resume();
+                    }
+
+                    $this->publishQueue->push(function () use ($topic, $value, $ts) {
+        
+                        $this->mysql->insert(
+                            [
+                                'topic' => $topic,
+                                'len' => \strlen($value),
+                                'ts' => \time()
+                            ],
+                            [
+                                'table' => 'post_history' 
+                            ]
+                        );
+                        
+                    });
+                }
+
+                $deferred->resolve(true);
+            })
+            ->otherwise(function (\Exception $e) use ($deferred) {
+                $this->outSystem->stdout("Publish error: " . $e->getMessage(), OutSystem::LEVEL_NOTICE);
+
+                $deferred->reject(new \Exception($e->getMessage()));
+            });
+
+            return $deferred->promise();
         }
+
         $this->outSystem->stdout("[publish] Broker disconnected, aborting ...", OutSystem::LEVEL_NOTICE);
 
-        return false;
+        return \React\Promise\reject(new \Exception("Broker disconnected"));
     }
 
-    public function postSensor($sensor, $value, $ts)
+    private function postUncommited()
     {
-        $value = [
+        if ($this->postErrorSensor) {
+            $this->outSystem->stdout("[Uncommited] Starting ... ", OutSystem::LEVEL_NOTICE);
+
+            $lastPost = $this->mysql->read(
+                [
+                    'table' => 'post_history',
+                    'select' => ['id','topic', 'ts']
+                ],
+                " WHERE topic LIKE '" . $this->config['config']['tenant']  . 
+                    '/sensors/' . $this->id . "' ORDER BY id DESC LIMIT 1" // Get last line
+            );
+
+            if (!empty($lastPost)) {
+                $this->outSystem->stdout(
+                    '[Uncommited] Using id ' . $lastPost[0]['id'] . ', topic ' . $lastPost[0]['topic'] .
+                        ', from ' . $lastPost[0]['ts'],
+                    OutSystem::LEVEL_NOTICE
+                );
+
+                $sensors = $this->mysql->read(
+                    [ 
+                        'table' => 'sensor_history',
+                        'select' => ['sensor','value', 'ts']
+                    ],
+                    "WHERE ts >= " . $lastPost[0]['ts'] . " LIMIT 30" // GET last 30 lines
+                );
+                
+                if (!empty($sensors)) {
+
+                    $numSensors = count($sensors);
+
+                    $this->outSystem->stdout(
+                        "[Uncommited] Publishing to " . $sensors[($numSensors - 1)]['ts'], 
+                        OutSystem::LEVEL_NOTICE
+                    );
+
+                    $this->publish(
+                        $lastPost[0]['topic'], 
+                        \json_encode($sensors),
+                        intval($sensors[($numSensors - 1)]['ts']) // register last sensor ts as post time
+                    )->then(function ($ret) {
+                        $this->postUncommited();
+                    });
+
+                    $this->outSystem->stdout("[Uncommited] Selected $numSensors", OutSystem::LEVEL_NOTICE);
+
+                    if ($numSensors < 30) // Last lines
+                        $this->postErrorSensor = false;
+
+                } else {
+                    $this->outSystem->stdout("[Uncommited] Selected ZERO", OutSystem::LEVEL_NOTICE);
+                    $this->postErrorSensor = false;
+                }
+            } else {
+                $this->outSystem->stdout("[Uncommited] No last posts", OutSystem::LEVEL_NOTICE);
+                return false; // <---- Check if it will not cause any error
+            }
+        }
+
+        return $this->postErrorSensor;
+
+        if ($this->postErrorConfig) {
+            $lastPost = $this->mysql->read(
+                [
+                    'table' => 'post_history',
+                    'select' => ['id','topic', 'ts']
+                ],
+                " WHERE topic LIKE '" . $this->config['config']['tenant']  . 
+                    "/config/%' ORDER BY id DESC LIMIT 1" // Get last line
+            );
+
+            if (!empty($lastPost)) {
+                $sensors = $this->mysql->read(
+                    [ 
+                        'table' => 'sensor_history',
+                        'select' => ['sensor','value', 'ts']
+                    ],
+                    " WHERE ts >= " . $lastPost[0]['ts'] . " LIMIT 20" // GET last 20 lines
+                );
+
+                if (!empty($sensors)) {
+
+                    $this->loop->futureTick(function () use ($lastPost, $sensors) {
+                        $this->publish(
+                            $lastPost[0]['topic'], 
+                            $value,
+                            $sensors[count($sensors) - 1]['ts'] // register last sensor ts as post time
+                        )->then(function () {
+                            $this->postUncommited();
+                        });
+                    });
+
+                    if (count($sensors) < 20) // Last lines
+                        $this->postErrorSensor = false;
+
+                } else {
+                    $this->postErrorSensor = false;
+                }
+            }
+        }
+        
+        return ($this->postErrorSensor === false);
+
+    }
+
+
+    public function sensorData($sensor, $value, $ts)
+    {
+        $data = [
             'sensor' => $sensor,
             'value' => $value,
             'ts' => $ts
         ];
 
-        $this->postSensorBuffer[] = $value;
+        $this->postSensorBuffer[] = $data;
+
+        $this->mysql->insert(
+            $data,
+            [
+                'table' => 'sensor_history' 
+            ]
+        );
 
         return true;
     }
@@ -329,7 +530,11 @@ class MqttService implements MqttServiceInterface
             ];
         }
 
-        return $this->publish($topic, \json_encode($value));
+        $this->publish($topic, $data)->otherwise(function () {
+            $this->postErrorConfig = true;
+        });
+
+        return;
     }
 
     private function configureSensor($name, $time)
@@ -355,7 +560,7 @@ class MqttService implements MqttServiceInterface
         unset($config['user']);
 
         foreach ($config as $key => $conf) {
-            if ($key === 'eth') {
+            if ($key === 'eth-disabled') {
                 if (!isset($conf['active']))
                 return "Misconfigured activation";
 
@@ -368,7 +573,7 @@ class MqttService implements MqttServiceInterface
                 } else {
 
                 }
-            } else if ($key === 'wifi') {
+            } else if ($key === 'wifi-disabled') {
                 if (!isset($conf['active']))
                     return "Misconfigured activation";
 
@@ -404,21 +609,6 @@ class MqttService implements MqttServiceInterface
                 if (!isset($conf['ts']))
                     return "Misconfigured ts";    
 
-                /* Not handled in this version
-                if ($conf['sensor'] === 'global') {
-                    foreach ($this->hid->getInterfaceByName(true) as $interface) {
-                        $interface['time'] = $conf['period'];
-                        $this->hid->registerInterface(
-                            $interface, 
-                            function ($sensor, $value) {
-                                $this->postSensor($sensor, $value);
-                            }
-                        );
-                    }
-
-                    break;
-                }
-                */
                 $this->configureSensor($conf['sensor'], $conf['period']);
             }
 
@@ -496,8 +686,11 @@ class MqttService implements MqttServiceInterface
                 OutSystem::LEVEL_NOTICE
             );
 
-            if (is_array($data = \json_decode($data, true))) {
-                if (!is_bool($result = $this->configureByJson($data)))
+            $data = \json_decode($data, true);
+            if (\is_array($data)) {
+                $result = $this->configureByJson($data);
+
+                if (!\is_bool($result))
                     $this->outSystem->stdout( "Error config: $result" , OutSystem::LEVEL_NOTICE);
                 else 
                     $this->outSystem->stdout( "Configured / Scheduled." , OutSystem::LEVEL_NOTICE);
@@ -584,6 +777,9 @@ class MqttService implements MqttServiceInterface
 
             // Subscribe to all configs
             $this->subscribe($config['tenant']. '/config/+/' . $this->id);
+
+            // Send unpublished data
+            $this->postUncommited();
                 
         }, function () { // Force reconnection on error
             $this->scheduleReconnection();
@@ -601,7 +797,10 @@ class MqttService implements MqttServiceInterface
             
             // Post sensors on mqtt server
             $topic = $this->config['config']['tenant']  . '/sensors/' . $this->id;
-            $this->publish($topic, $data);
+            
+            $this->publish($topic, $data)->otherwise(function () {
+                $this->postErrorSensor = true;
+            });
 
             // Sent data to unix service clients too
             $this->service->server->write($data);
@@ -622,15 +821,25 @@ class MqttService implements MqttServiceInterface
 
                 if (isset($data['ident'])) {
                     if ($data['ident'] === HIDInterface::HID_DATA_TYPE_ACK) { // Config accept
+
                         $this->outSystem->stdout("ACK", OutSystem::LEVEL_NOTICE);
                         $this->dequeue();
+
                     } else if ($data['ident'] === HIDInterface::HID_DATA_TYPE_NACK) { // Config not accept
+
                         $this->outSystem->stdout("NACK", OutSystem::LEVEL_NOTICE);
                         $this->dequeue();
+
                     } else if ($data['ident'] === HIDInterface::HID_DATA_TYPE_ACQ) { // Sensor data
-                        $this->postSensor($data['name'], $data['value'], $data['ts']);
+
+                        $this->outSystem->stdout("SENSOR DATA", OutSystem::LEVEL_NOTICE);
+                        $this->sensorData($data['name'], $data['value'], $data['ts']);
+
                     } else if ($data['ident'] === HIDInterface::HID_DATA_TYPE_CFG) { // Sensor configured
-                        $this->postConfig('sensor', $data['name'], $data['time'], \time());;
+
+                        $this->outSystem->stdout("SENSOR CONFIG", OutSystem::LEVEL_NOTICE);
+                        $this->postConfig('sensor', $data['name'], $data['time'], \time());
+
                     } else {
                         // unrecognized data
                         
