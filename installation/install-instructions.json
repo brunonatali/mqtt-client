@@ -1,7 +1,7 @@
 {
     "service" : [
         {
-            "name" : "mqttNhidClient",
+            "name" : "app-mqtt",
             "bin" : "startServer"
         }
     ]
