@@ -51,9 +51,13 @@ class MqttService implements MqttServiceInterface
     private $sysConfig;
     private $dns;
 
+    private $hidConnStatus = false;
+    private $brokerConnStatus = false;
+    private $dbStatus = true;
+
     private $id;
     private $queueTO;
-    private $reconnectionScheduled;
+    private $reconnectionScheduled = null;
     private $postSensorBuffer = [];
     private $postSensorsTimer = null;
     private $postErrorSensor = true; // Starts with true to send every unsended
@@ -88,23 +92,32 @@ class MqttService implements MqttServiceInterface
             'PASSWORD' => ''
         ];
 
-        $this->mysql = new Mysql(
-            $this->loop,
-            \array_merge(
-                $this->sysConfig,
-                [
-                    'SERVER' => 'localhost',
-                    'SOLVE_PROBLEMS' => true, 
-                    'DB' => 'mqtt'
-                ],
-                $dbCreddentials
-            )
-        );
+        try {
+            $this->mysql = new Mysql(
+                $this->loop,
+                \array_merge(
+                    $this->sysConfig,
+                    [
+                        'SERVER' => 'localhost',
+                        'SOLVE_PROBLEMS' => true, 
+                        'DB' => 'mqtt'
+                    ],
+                    $dbCreddentials
+                )
+            );
+        } catch (\Throwable $e) {
+            $this->dbStatus = false;
+            $this->service->reportStatus(
+                self::MQTT_ERROR_COULD_NOT_INITILIZE_DB, 
+                false, 
+                "DB init error: " . $e->getMessage()
+            );
+        }
 
         $this->server = new SimpleUnixServer($this->loop, self::MQTT_SERVICE_SOCKET, $this->sysConfig);
 
         // Connect to HID 
-        $this->hidClient = new SimpleUnixClient($this->loop, 'hid.sock', $this->sysConfig);
+        $this->hidClient = new SimpleUnixClient($this->loop, 'hid-service.sock', $this->sysConfig);
 
         $this->client = null; // Set MQTT client
 
@@ -112,8 +125,6 @@ class MqttService implements MqttServiceInterface
         $this->publishQueue = new Queue($this->loop);
 
         $this->outSystem = new OutSystem($this->sysConfig);
-
-        $this->reconnectionScheduled = false;
         
         $this->service = new UnixServicePort($this->loop, 'mqtt', $this->sysConfig);
 
@@ -274,11 +285,19 @@ class MqttService implements MqttServiceInterface
             false, JSON_PRETTY_PRINT))
             return true;
 
+        $this->service->reportStatus(self::MQTT_ERROR_SAVE_CONFIG, false);
+
         return false;
     }
 
     public function start()
     {
+        if (!$this->config['enabled']) {
+            $this->outSystem->stdout("Module is disabled. Enable & re-run", OutSystem::LEVEL_NOTICE);
+            return;
+        }
+
+
         $this->configureCallbacks();
 
         $this->connectToBroker();
@@ -639,21 +658,43 @@ class MqttService implements MqttServiceInterface
         $this->client = new ReactMqttClient($connector, $this->loop);
 
         $this->client->on('open', function () {
+
+            $this->brokerConnStatus = true;
+            
+            if ($this->hidConnStatus && $this->dbStatus && $this->service->getGlobalStatus() !== 0)
+                $this->service->reportStatus(0, false);
+
             $this->outSystem->stdout("Opened -> " . $this->client->getHost() . ':' . $this->client->getPort(), OutSystem::LEVEL_NOTICE);
         });
         
         $this->client->on('close', function () {
             $this->outSystem->stdout("Closed -> " . $this->client->getHost() . ':' . $this->client->getPort(), OutSystem::LEVEL_NOTICE);
        
+            $this->brokerConnStatus = false;
+
+            if ($this->service->getGlobalStatus() !== self::MQTT_ERROR_BROKER_CONNECTION_LOST)
+                $this->service->reportStatus(self::MQTT_ERROR_BROKER_CONNECTION_LOST, false, "Broker conn lost");
+
             $this->scheduleReconnection();
         });
         
         $this->client->on('connect', function (Connection $connection) {
+
+            $this->brokerConnStatus = true;
+            
+            if ($this->hidConnStatus && $this->dbStatus && $this->service->getGlobalStatus() !== 0)
+                $this->service->reportStatus(0, false);
+
             $this->outSystem->stdout("Broker connected: " . $connection->getClientID(), OutSystem::LEVEL_NOTICE);
         });
         
         $this->client->on('disconnect', function (Connection $connection) {
             $this->outSystem->stdout("Broker disconnected: " . $connection->getClientID(), OutSystem::LEVEL_NOTICE);
+
+            $this->brokerConnStatus = false;
+
+            if ($this->service->getGlobalStatus() !== self::MQTT_ERROR_BROKER_CONNECTION_LOST)
+                $this->service->reportStatus(self::MQTT_ERROR_BROKER_CONNECTION_LOST, false, "Broker conn lost");
 
             $this->scheduleReconnection();
         });
@@ -664,7 +705,7 @@ class MqttService implements MqttServiceInterface
         
         $this->client->on('error', function (\Exception $e) {
             $this->outSystem->stdout("Broker error: " . $e->getMessage() .
-                ' Scheduling error handler to 10s ...' , OutSystem::LEVEL_NOTICE);
+                ' Scheduling error handler to ' . self::MQTT_RECONNECT_TO . 's ...' , OutSystem::LEVEL_NOTICE);
 
             $this->scheduleReconnection();
         });
@@ -706,16 +747,20 @@ class MqttService implements MqttServiceInterface
     */
     private function scheduleReconnection()
     {
-        if ($this->reconnectionScheduled)
-            return;
+        if ($this->reconnectionScheduled !== null)
+            return;     
 
-        $this->reconnectionScheduled = true;
+        $this->brokerConnStatus = false;
 
-        $this->loop->addTimer(self::MQTT_RECONNECT_TO, function () {
-            $this->reconnectionScheduled = false;
+        if ($this->service->getGlobalStatus() !== self::MQTT_ERROR_BROKER_CONNECTION_LOST)
+            $this->service->reportStatus(self::MQTT_ERROR_BROKER_CONNECTION_LOST, false, "Broker conn lost");
 
-            $this->connectToBroker();
-        });
+        $this->reconnectionScheduled =
+            $this->loop->addTimer(self::MQTT_RECONNECT_TO, function () {
+                $this->reconnectionScheduled = null;
+
+                $this->connectToBroker();
+            });
     }
 
     private function connectToBroker()
@@ -780,8 +825,18 @@ class MqttService implements MqttServiceInterface
 
             // Send unpublished data
             $this->postUncommited();
+
+            $this->brokerConnStatus = true;
+
+            if ($this->hidConnStatus && $this->dbStatus && $this->service->getGlobalStatus() !== 0)
+                $this->service->reportStatus(0, false);
                 
         }, function () { // Force reconnection on error
+            $this->brokerConnStatus = false;
+
+            if ($this->service->getGlobalStatus() !== self::MQTT_ERROR_BROKER_CONNECTION_LOST)
+                $this->service->reportStatus(self::MQTT_ERROR_BROKER_CONNECTION_LOST, false, "Broker conn lost");
+
             $this->scheduleReconnection();
         });
 
@@ -854,11 +909,22 @@ class MqttService implements MqttServiceInterface
 
         $this->hidClient->onConnect(function () {
             $this->outSystem->stdout("Connected to HID", OutSystem::LEVEL_NOTICE);
+
+            $this->hidConnStatus = true;
+
+            if ($this->brokerConnStatus && $this->dbStatus && $this->service->getGlobalStatus() !== 0)
+                $this->service->reportStatus(0, false);
+
             $this->dequeue();
         });
 
         $this->hidClient->onClose(function () {
             $this->outSystem->stdout("Connection to HID closed", OutSystem::LEVEL_NOTICE);
+
+            $this->hidConnStatus = false;
+
+            if ($this->service->getGlobalStatus() !== self::MQTT_ERROR_HID_CONNECTION_LOST)
+                $this->service->reportStatus(self::MQTT_ERROR_HID_CONNECTION_LOST, false, "HID conn lost");
         });
     }
 

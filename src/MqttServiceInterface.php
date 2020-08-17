@@ -17,5 +17,10 @@ interface MqttServiceInterface extends MainInterface
     const MQTT_PASSWORD = '1234';
     const MQTT_CLIENT_ID = '1234567890abcdef12';
 
-    const MQTT_RECONNECT_TO = 10; // seconds
+    const MQTT_RECONNECT_TO = 10.0; // seconds
+
+    const MQTT_ERROR_SAVE_CONFIG = 0x30;
+    const MQTT_ERROR_COULD_NOT_INITILIZE_DB = 0x31;
+    const MQTT_ERROR_HID_CONNECTION_LOST = 0x32;
+    const MQTT_ERROR_BROKER_CONNECTION_LOST = 0x33;
 }
